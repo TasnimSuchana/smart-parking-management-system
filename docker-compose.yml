@@ -1,0 +1,193 @@
+# Smart Parking Management System - Docker Compose
+# Only the web container publishes a host port. MongoDB, Redis, RabbitMQ and all services live on private networks.
+x-service: &service
+  restart: unless-stopped
+  networks: [backend]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: [/tmp]
+  depends_on:
+    mongo: {condition: service_healthy}
+    redis: {condition: service_healthy}
+    rabbitmq: {condition: service_healthy}
+x-env: &env
+  NODE_ENV: production
+  MONGO_HOST: mongo:27017
+  MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?set in .env}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set in .env}@redis:6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:?set in .env}:${RABBITMQ_PASSWORD:?set in .env}@rabbitmq:5672
+  JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set in .env}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set in .env}
+  INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set in .env}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set in .env}
+  QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:?set in .env}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  CORS_ORIGINS: ${PUBLIC_URL:-http://localhost:8080}
+  PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    networks: [backend]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:?set in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set in .env}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?set in .env}
+    command: ["mongod", "--auth", "--bind_ip_all"]
+    volumes:
+      - mongo-data:/data/db
+      - ./infrastructure/mongo/mongo-init.sh:/docker-entrypoint-initdb.d/mongo-init.sh:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [backend]
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD:?set in .env}"]
+    volumes:
+      - redis-data:/data
+      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    restart: unless-stopped
+    networks: [backend]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?set in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set in .env}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./infrastructure/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/90-custom.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  api-gateway:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: api-gateway}}
+    environment:
+      <<: *env
+      PORT: "4000"
+      RATE_LIMIT_PER_MIN: ${RATE_LIMIT_PER_MIN:-300}
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-20}
+
+  auth-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: auth-service}}
+    environment:
+      <<: *env
+      PORT: "4001"
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+
+  user-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: user-service}}
+    environment:
+      <<: *env
+      PORT: "4002"
+
+  parking-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: parking-service}}
+    environment:
+      <<: *env
+      PORT: "4003"
+
+  booking-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: booking-service}}
+    environment:
+      <<: *env
+      PORT: "4004"
+
+  vehicle-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: vehicle-service}}
+    environment:
+      <<: *env
+      PORT: "4005"
+
+  payment-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: payment-service}}
+    environment:
+      <<: *env
+      PORT: "4006"
+
+  camera-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: camera-service}}
+    environment:
+      <<: *env
+      PORT: "4007"
+      DETECTOR_URL: ${DETECTOR_URL:-}
+      DETECTOR_API_KEY: ${DETECTOR_API_KEY:-}
+
+  notification-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: notification-service}}
+    environment:
+      <<: *env
+      PORT: "4008"
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+
+  analytics-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: analytics-service}}
+    environment:
+      <<: *env
+      PORT: "4009"
+
+  audit-service:
+    <<: *service
+    build: {context: ., dockerfile: infrastructure/docker/service.Dockerfile, args: {SERVICE: audit-service}}
+    environment:
+      <<: *env
+      PORT: "4010"
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/frontend.Dockerfile
+      args:
+        VITE_SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+        VITE_SUPPORT_PHONE: ${SUPPORT_PHONE:-}
+    restart: unless-stopped
+    networks: [backend, public]
+    ports: ["${WEB_PORT:-8080}:8080"]
+    depends_on:
+      api-gateway: {condition: service_healthy}
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+networks:
+  backend: {internal: true}
+  public: {}
+
+volumes:
+  mongo-data:
+  redis-data:
+  rabbitmq-data:
