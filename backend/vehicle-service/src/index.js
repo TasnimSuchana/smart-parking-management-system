@@ -40,7 +40,7 @@ const body = z.object({ plate, type: z.enum(TYPES), make: z.string().trim().max(
 
   app.get('/internal/:id', internalOnly, asyncH(async (req, res) => {
     const v = await Vehicle.findById(req.params.id); if (!v) throw notFound();
-    const p = decrypt(v.plateEnc); ok(res, { id: v._id, userId: v.userId, type: v.type, plateMasked: `${p.slice(0, 2)}***${p.slice(-2)}` });
+    const p = decrypt(v.plateEnc); ok(res, { id: v._id, userId: v.userId, type: v.type, plate: p, plateMasked: `${p.slice(0, 2)}***${p.slice(-2)}` });
   }));
   finish(app); app.listen(4005, () => console.log('[vehicle-service] listening on 4005'));
 })().catch((e) => { console.error('[vehicle-service] fatal:', e.message); process.exit(1); });
