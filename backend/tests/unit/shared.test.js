@@ -79,6 +79,17 @@ test('pricing: base, vehicle multiplier, peak, cap, demand', () => {
   assert.equal(pricing.calculate({ rule: dem, start: s, end: '2026-01-01T01:00:00Z', occupancyPct: 95 }).total, 75);
   assert.throws(() => pricing.calculate({ rule, start: s, end: s }));
 });
+
+test('pricing: itemised breakdown sums to the total (peak, cap, demand, service fee, discount)', () => {
+  const rule = { ...pricing.DEFAULT_RULE, peak: [{ startHour: 6, endHour: 7, multiplier: 2 }], demand: [{ minOccupancy: 90, multiplier: 1.5 }], serviceFee: 10, discountPercent: 10 };
+  const q = pricing.calculate({ rule, start: '2026-01-01T00:00:00Z', end: '2026-01-01T02:00:00Z', occupancyPct: 95 });
+  const sum = Math.round(q.lines.reduce((a, l) => a + l.amount, 0) * 100) / 100;
+  assert.equal(sum, q.total);
+  assert.deepEqual(q.lines.map((l) => l.key), ['parking', 'peak', 'demand', 'service', 'discount']);
+  assert.equal(q.lines[0].amount, 100); assert.equal(q.lines[1].amount, 50); // 2h base, +50 peak surcharge
+  const plain = pricing.calculate({ rule: pricing.DEFAULT_RULE, start: '2026-01-01T00:00:00Z', end: '2026-01-01T12:00:00Z' });
+  assert.ok(plain.lines.some((l) => l.key === 'cap' && l.amount < 0));
+});
 function run(mwFn, req) { return new Promise((resolve) => { const res = {}; mwFn(req, res, (e) => resolve(e || null)); }); }
 test('sanitize strips $-operators and dotted keys', async () => {
   const req = { body: { email: { $ne: null }, a: { 'b.c': 1, ok: 2 }, list: [{ $gt: 1, x: 1 }] }, query: { q: { $regex: '.*' } }, params: {} };

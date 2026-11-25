@@ -9,6 +9,10 @@
 | `docker-compose.yml` parsed as YAML; MongoDB has no published ports; only `web` publishes a port | passed |
 | `scripts/security-scan.sh` | passed |
 
+## Added with the booking, payment and analytics features
+Executed offline: 13 backend unit tests (including an itemised-price test where every line sums to the total), 10 frontend helper tests (map colours, opening hours, distance, pricing lookup) run through a minimal shim because vitest could not be installed, syntax and undefined-name checks of every backend and frontend file, and a full frontend import-graph bundle.
+NOT run: the new endpoints against MongoDB, the booking wizard in a browser, invoice PDF output, QR verify/entry/exit end to end, analytics numbers against real data, and the integration suite. These need `docker compose up` on your machine.
+
 ## Written but NOT executed (needs your environment)
 | Requirement | Test asset | Status |
 |---|---|---|

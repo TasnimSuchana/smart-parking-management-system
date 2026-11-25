@@ -27,6 +27,12 @@
 | - | CSRF | SameSite=Strict + double-submit token on all cookie-authenticated mutations | `shared/middleware.js` |
 | - | Containers | Non-root users, read-only filesystems, `cap_drop: ALL`, `no-new-privileges`, health checks | compose, Dockerfiles |
 
+## Added with the booking, payment and analytics features
+- Prices, availability, payment status and user identity are never taken from the browser: quotes and totals are calculated by the server, availability is re-checked at booking, and the database rejects overlapping bookings.
+- Test payments (`ENABLE_DEMO_PAYMENT`) let a user mark their own booking paid without paying. They are OFF by default, labelled as simulated everywhere (invoice, transaction list), and must stay off in production unless a real gateway confirms payments.
+- Invoices and transaction details are visible only to the owner or an admin; other users get 404. QR verification is admin-only, logs `qr.scanned`, `qr.rejected` and `qr.invalid`, and does not change state.
+- The internal vehicle endpoint now returns the full plate (internal network and key only) so invoices can print it; the plate is never stored in the payment database.
+
 ## Known limitations / residual risk
 1. **Password hashing is scrypt, not Argon2id/bcrypt** (the brief allowed Argon2id or bcrypt). scrypt with these parameters is OWASP-acceptable and avoids native dependencies; swap in `argon2` inside `shared/password.js` if you need strict conformance (the stored format is versioned for migration).
 2. Suspension is enforced immediately via Redis; if Redis is down the check fails open and a suspended user's access token remains valid for up to 15 minutes.

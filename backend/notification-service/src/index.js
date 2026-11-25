@@ -47,6 +47,9 @@ const PUBLIC_URL = opt('PUBLIC_URL', 'http://localhost:8080');
   const notify = async (userId, title, message, type) => { if (!userId) return; const n = await Notification.create({ userId, title, message, type }); io.to(`user:${userId}`).emit('notification', { id: n._id, title, message, type, createdAt: n.createdAt }); };
   await bus.subscribe('notification-service.events', ['slot.#', 'booking.#', 'camera.#', 'notify.#', 'alert.#', 'email.#', 'payment.#'], async (key, m) => {
     if (key === 'slot.updated') io.to(`loc:${m.locationId}`).emit('slot:updated', { slotId: m.slotId, label: m.label, status: m.status, locationId: m.locationId });
+    if (key.startsWith('booking.') || key === 'payment.recorded') io.to('admins').emit('stats:changed', { key });
+    if (key.startsWith('booking.') && m.locationId) io.to(`loc:${m.locationId}`).emit('availability:changed', { locationId: m.locationId });
+    if (key === 'slot.updated') io.to('admins').emit('stats:changed', { key });
     else if (key === 'booking.created') await notify(m.userId, 'Booking confirmed', `Slot ${m.slotLabel} is reserved.`, 'success');
     else if (key === 'booking.cancelled') await notify(m.userId, 'Booking cancelled', `Your booking for slot ${m.slotLabel} was cancelled.`, 'info');
     else if (key === 'booking.entry') await notify(m.userId, 'Entry recorded', `Welcome! Slot ${m.slotLabel}.`, 'success');
