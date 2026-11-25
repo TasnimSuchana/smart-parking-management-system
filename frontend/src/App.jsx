@@ -8,7 +8,8 @@ import LocationDetail from './pages/LocationDetail.jsx';
 import { Login, Register, ForgotPassword, ResetPassword } from './pages/Auth.jsx';
 import NotFound from './pages/NotFound.jsx';
 import CameraMonitor from './pages/CameraMonitor.jsx';
-import { UserOverview, BookRedirect, Bookings, Vehicles, Payments, Notifications, Profile } from './pages/user/UserPages.jsx';
+import { UserOverview, Bookings, Vehicles, Payments, Notifications, Profile } from './pages/user/UserPages.jsx';
+import BookingWizard from './pages/user/BookingWizard.jsx';
 import { Scan, DailyRecords } from './pages/admin/OperationsPages.jsx';
 import { AdminOverview, AdminLocations, AdminUsers, AdminPricing, AdminTransactions, AdminSecurity } from './pages/admin/AdminPages.jsx';
 
@@ -23,7 +24,7 @@ export default function App() {
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="account" element={guard(['user'], <DashboardLayout />)}>
-        <Route index element={<UserOverview />} /><Route path="book" element={<BookRedirect />} /><Route path="bookings" element={<Bookings />} /><Route path="vehicles" element={<Vehicles />} />
+        <Route index element={<UserOverview />} /><Route path="book" element={<BookingWizard />} /><Route path="bookings" element={<Bookings />} /><Route path="vehicles" element={<Vehicles />} />
         <Route path="payments" element={<Payments />} /><Route path="notifications" element={<Notifications />} /><Route path="profile" element={<Profile />} />
       </Route>
       <Route path="admin" element={guard(['admin'], <DashboardLayout />)}>
