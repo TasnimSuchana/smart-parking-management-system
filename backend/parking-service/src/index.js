@@ -13,6 +13,8 @@ const Location = mongoose.model('Location', new mongoose.Schema({
   name: { type: String, required: true, maxlength: 100 }, address: { type: String, required: true, maxlength: 200 }, city: { type: String, required: true, maxlength: 60, index: true },
   description: { type: String, maxlength: 600 }, phone: { type: String, maxlength: 20 }, email: { type: String, maxlength: 120 },
   lat: Number, lng: Number, active: { type: Boolean, default: true },
+  amenities: { covered: { type: Boolean, default: false }, cctv: { type: Boolean, default: false }, evCharging: { type: Boolean, default: false } },
+  open24h: { type: Boolean, default: true }, opensAt: { type: String, match: /^([01]\d|2[0-3]):[0-5]\d$/ }, closesAt: { type: String, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
 }, { timestamps: true }).index({ name: 'text', address: 'text', city: 'text' }));
 const Slot = mongoose.model('Slot', new mongoose.Schema({
   locationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Location', required: true, index: true },
@@ -22,7 +24,9 @@ const Slot = mongoose.model('Slot', new mongoose.Schema({
 
 const locBody = z.object({ name: z.string().trim().min(2).max(100), address: z.string().trim().min(3).max(200), city: z.string().trim().min(2).max(60),
   description: z.string().max(600).optional(), phone: z.string().regex(/^\+?[0-9 -]{6,20}$/).optional().or(z.literal('')), email: z.string().email().optional().or(z.literal('')),
-  lat: z.number().min(-90).max(90).optional(), lng: z.number().min(-180).max(180).optional(), active: z.boolean().optional() }).strict();
+  lat: z.number().min(-90).max(90).optional(), lng: z.number().min(-180).max(180).optional(), active: z.boolean().optional(),
+  amenities: z.object({ covered: z.boolean().optional(), cctv: z.boolean().optional(), evCharging: z.boolean().optional() }).strict().optional(),
+  open24h: z.boolean().optional(), opensAt: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().or(z.literal('')), closesAt: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().or(z.literal('')) }).strict();
 const publicSlot = (s) => ({ id: s._id, locationId: s.locationId, label: s.label, category: s.category, status: s.status });
 const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -87,6 +91,12 @@ async function setStatus(slot, status, by) {
   app.get('/internal/locations/:id/occupancy', internalOnly, asyncH(async (req, res) => {
     const [t, o] = await Promise.all([Slot.countDocuments({ locationId: req.params.id, status: { $ne: 'maintenance' } }), Slot.countDocuments({ locationId: req.params.id, status: { $in: ['occupied', 'reserved'] } })]);
     ok(res, { total: t, busy: o, pct: t ? (o / t) * 100 : 0 });
+  }));
+  app.get('/internal/locations-summary', internalOnly, asyncH(async (_req, res) => {
+    const [locs, g] = await Promise.all([Location.find({}, 'name city active').lean(), Slot.aggregate([{ $group: { _id: { l: '$locationId', s: '$status' }, n: { $sum: 1 } } }])]);
+    const m = new Map(locs.map((l) => [String(l._id), { id: String(l._id), name: l.name, city: l.city, active: l.active, total: 0, available: 0, occupied: 0, reserved: 0, maintenance: 0 }]));
+    for (const r of g) { const x = m.get(String(r._id.l)); if (x) { x[r._id.s] = r.n; x.total += r.n; } }
+    ok(res, [...m.values()]);
   }));
   app.get('/internal/stats', internalOnly, asyncH(async (_req, res) => {
     const g = await Slot.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]); const out = { total: 0, available: 0, occupied: 0, reserved: 0, maintenance: 0 };
