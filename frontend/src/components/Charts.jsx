@@ -1,46 +1,17 @@
-import { useEffect, useState } from 'react';
-import useCountUp from '../ui/useCountUp.js';
+import { Empty } from './UI.jsx';
 
-export function BarChart({ data, label, value, format = (n) => n, height = 160, highlightMax = false }) {
-  const [hover, setHover] = useState(null);
-  const vals = data.map(value); const peak = Math.max(...vals); const max = Math.max(1, peak); const top = vals.indexOf(peak);
+// Lightweight bar chart (no chart library). `fixedMax` lets percentage charts share a 0-100 scale.
+export function BarChart({ data, x, y, fmt = (v) => v, fixedMax, height = 140, label = 'Bar chart', every = 1 }) {
+  if (!data?.length) return <Empty title="No data for this range" />;
+  const max = fixedMax ?? Math.max(1, ...data.map(y));
   return (
-    <div className="chart" role="img" aria-label={`Bar chart with ${data.length} values. Highest ${format(peak)} at ${label(data[top])}.`}>
-      <div className="chart-plot" style={{ height }}>
-        <span className="chart-max small muted">{format(max)}</span>
-        <div className="chart-bars" onMouseLeave={() => setHover(null)}>
-          {data.map((d, i) => <div key={i} className={`chart-bar ${highlightMax && i === top ? 'top' : ''} ${hover === i ? 'hov' : ''}`} style={{ height: `${(vals[i] / max) * 100}%`, animationDelay: `${Math.min(i * 12, 300)}ms` }} onMouseEnter={() => setHover(i)} onTouchStart={() => setHover(i)} />)}
-        </div>
+    <div role="img" aria-label={label}>
+      <div className="row" style={{ alignItems: 'end', gap: 3, height, flexWrap: 'nowrap' }}>
+        {data.map((d, i) => <div key={i} title={`${x(d)}: ${fmt(y(d))}`} style={{ flex: 1, minWidth: 3, height: `${Math.max(2, (y(d) / max) * 100)}%`, background: 'linear-gradient(var(--accent),var(--accent2))', borderRadius: '4px 4px 0 0' }} />)}
       </div>
-      <div className="chart-tip small" aria-hidden="true">{hover != null ? `${label(data[hover])}: ${format(vals[hover])}` : '\u00a0'}</div>
+      <div className="row between small muted" style={{ marginTop: 4 }}><span>{x(data[0])}</span><span>max {fmt(max)}</span><span>{x(data[data.length - 1])}</span></div>
     </div>
   );
 }
-
-export function Gauge({ pct = 0, size = 92 }) {
-  const p = Math.max(0, Math.min(100, Number(pct) || 0)); const r = 36; const c = 2 * Math.PI * r;
-  const [on, setOn] = useState(false); useEffect(() => { const t = requestAnimationFrame(() => setOn(true)); return () => cancelAnimationFrame(t); }, []);
-  const n = useCountUp(Math.round(p));
-  const color = p >= 85 ? 'var(--bad)' : p >= 60 ? 'var(--warn)' : 'var(--ok)';
-  return (
-    <div className="gauge" style={{ width: size, height: size }} role="img" aria-label={`Utilization ${Math.round(p)} percent`}>
-      <svg viewBox="0 0 100 100" width={size} height={size}>
-        <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="9" />
-        <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round" transform="rotate(-90 50 50)" strokeDasharray={c} strokeDashoffset={on ? c * (1 - p / 100) : c} style={{ transition: 'stroke-dashoffset .8s ease-out' }} />
-      </svg>
-      <span className="gauge-n">{n}%</span>
-    </div>
-  );
-}
-
-export function StackBar({ parts }) {
-  const total = Math.max(1, parts.reduce((a, x) => a + x.value, 0));
-  return (
-    <div>
-      <div className="stackbar" role="img" aria-label={parts.map((x) => `${x.label} ${x.value}`).join(', ')}>
-        {parts.filter((x) => x.value > 0).map((x) => <i key={x.label} style={{ width: `${(x.value / total) * 100}%`, background: x.color }} title={`${x.label}: ${x.value}`} />)}
-      </div>
-      <div className="legend" style={{ marginTop: '.6rem' }}>{parts.map((x) => <span key={x.label}><span className="dot" style={{ background: x.color }} /> {x.label} {x.value}</span>)}</div>
-    </div>
-  );
-}
+export const RevenueChart = ({ data, currency = 'BDT' }) => <BarChart data={data} x={(d) => d.period} y={(d) => d.revenue} fmt={(v) => `${currency} ${Math.round(v).toLocaleString()}`} label="Revenue chart" />;
+export const OccupancyChart = ({ data, xKey = 'hour' }) => <BarChart data={data} x={(d) => (xKey === 'hour' ? `${d.hour}:00` : d.date)} y={(d) => d.pct} fmt={(v) => `${Math.round(v)}%`} fixedMax={100} label="Occupancy chart" />;

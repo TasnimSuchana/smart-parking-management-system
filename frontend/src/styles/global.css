@@ -46,3 +46,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block;background:var(--muted)}.dot.on{background:var(--ok)}.dot.off{background:var(--bad)}
 .auth{max-width:420px;margin:2rem auto}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* --- booking flow, map, cards (added) --- */
+.chip{display:inline-flex;align-items:center;gap:.25rem;padding:.1rem .55rem;border-radius:999px;font-size:.75rem;border:1px solid var(--border);color:var(--muted)}
+.lvl-plenty{color:var(--ok);background:rgba(52,211,153,.12)}.lvl-limited{color:var(--warn);background:rgba(251,191,36,.12)}.lvl-full{color:var(--bad);background:rgba(248,113,113,.12)}.lvl-unavailable{color:var(--muted);background:rgba(154,167,180,.12)}
+.ok-text{color:var(--ok)}.sel-card{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}.pick{cursor:pointer;display:block;margin:0!important}
+.filters{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}.filters label.chk{display:inline-flex;gap:.35rem;align-items:center;font-size:.85rem;cursor:pointer}.filters input[type=checkbox]{width:auto;min-height:0}
+.stepper{list-style:none;display:flex;gap:.25rem;padding:0;margin:0 0 1rem;overflow-x:auto}.stepper li{flex:1;min-width:84px;display:flex;flex-direction:column;align-items:center;gap:.25rem;font-size:.78rem;color:var(--muted);position:relative}
+.stepper .n{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--border);background:var(--glass)}.stepper li.now{color:var(--text)}.stepper li.now .n{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04111a;border-color:transparent;font-weight:700}.stepper li.done .n{background:rgba(52,211,153,.2);color:var(--ok);border-color:rgba(52,211,153,.5)}
+.price-rows{display:flex;flex-direction:column;gap:.4rem}.price-row{display:flex;justify-content:space-between;gap:1rem}.price-row.neg span:last-child{color:var(--ok)}.price-row.total{border-top:1px solid var(--border);padding-top:.5rem;margin-top:.2rem;font-weight:700;font-size:1.05rem}
+.tabs{display:flex;gap:.35rem;flex-wrap:wrap}.tabs button{min-height:34px}.tabs .on{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04111a;border-color:transparent}
+.slot.selected-slot{background:rgba(34,211,238,.25);border-color:var(--accent)}

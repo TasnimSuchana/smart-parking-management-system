@@ -1,29 +1,21 @@
 import { Link } from 'react-router-dom';
-import { ParkingSquare } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { Brand, homeFor } from './Navbar.jsx';
 const email = import.meta.env.VITE_SUPPORT_EMAIL, phone = import.meta.env.VITE_SUPPORT_PHONE;
 export default function Footer() {
   const { user } = useAuth();
   return (
-    <footer className="footer"><div className="container">
-      <div className="cols">
-        <div>
-          <Link to="/" className="brand" aria-label="Smart Parking home"><span className="logo"><ParkingSquare size={18} /></span>Smart Parking</Link>
-          <p className="small" style={{ marginTop: '.6rem', maxWidth: 320 }}>Find a space, reserve it, and get a QR ticket for entry.</p>
-        </div>
-        <nav className="col" aria-label="Footer">
-          <h4>Explore</h4>
-          <Link to="/">Home</Link>
-          {user ? <Link to="/locations">Find parking</Link> : <><Link to="/login">Sign in</Link><Link to="/register">Register</Link></>}
+    <footer className="footer deep"><div className="container">
+      <div className="foot-top">
+        <div className="foot-brand"><Brand /><p>Less circling. More arriving.</p></div>
+        <nav className="foot-links" aria-label="Footer">
+          <Link to="/locations">Explore parking</Link>
+          {user ? <Link to={homeFor(user.role)}>Dashboard</Link> : <><Link to="/login">Sign in</Link><Link to="/register">Create account</Link></>}
+          {email && <a href={`mailto:${email}`}>{email}</a>}
+          {phone && <a href={`tel:${phone.replace(/[^+\d]/g, '')}`}>{phone}</a>}
         </nav>
-        {(email || phone) && (
-          <div className="col">
-            <h4>Contact</h4>
-            {email && <a href={`mailto:${email}`}>{email}</a>}
-            {phone && <a href={`tel:${phone.replace(/[^+\d]/g, '')}`}>{phone}</a>}
-          </div>)}
       </div>
-      <div className="legal small">&copy; {new Date().getFullYear()} Smart Parking. All rights reserved.</div>
+      <div className="legal small">&copy; {new Date().getFullYear()} Smart Parking</div>
     </div></footer>
   );
 }
