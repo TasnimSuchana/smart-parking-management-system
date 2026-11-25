@@ -35,6 +35,13 @@ Open http://localhost:8080 and sign in with the admin credentials. Then:
 
 Remove `ADMIN_PASSWORD` from `.env` after first start. Stop with `docker compose down` (data persists in volumes; add `-v` to wipe).
 
+## Customer journey (what the system does end to end)
+Sign in -> Find parking (search, filters, sorting, map, nearest) -> Book parking (5-step flow: location, date/time, vehicle, slot, review) -> price breakdown from the server -> booking confirmed with a signed QR ticket -> admin verifies and records entry -> slot becomes occupied -> admin records exit -> final amount, transaction and PDF invoice -> admin analytics update live.
+
+Payment: no real gateway is connected. Choose "Pay at exit" (admin records cash, card terminal or mobile banking) or, if `ENABLE_DEMO_PAYMENT=true`, a clearly labelled **test payment** that records a simulated success. Keep test payments off in production.
+
+Map: the map is a schematic view built from each location's latitude and longitude (enter them in Admin -> Locations). To use Google Maps or OpenStreetMap later, replace `frontend/src/components/ParkingMap.jsx`; the props stay the same.
+
 ## Production notes
 - Put TLS in front of the `web` container (cloud load balancer or certbot) and set `COOKIE_SECURE=true`, `PUBLIC_URL=https://your.domain`.
 - Rotate any secret that has ever been committed or shared. Removing it from the latest source does not make it safe.
