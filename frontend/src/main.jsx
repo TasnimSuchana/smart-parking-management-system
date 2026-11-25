@@ -7,6 +7,7 @@ import { ToastProvider } from './context/ToastContext.jsx';
 import './styles/global.css';
 import "./ui/tokens.css";
 import "./styles/polish.css";
+import "./styles/theme.css";
 createRoot(document.getElementById('root')).render(
   <React.StrictMode><BrowserRouter><ToastProvider><AuthProvider><App /></AuthProvider></ToastProvider></BrowserRouter></React.StrictMode>,
 );

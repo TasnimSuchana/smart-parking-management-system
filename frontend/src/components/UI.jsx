@@ -9,7 +9,7 @@ export const Badge = ({ value }) => <span className={`badge b-${value}`}>{value}
 export function Stat({ label, value, hint }) {
   const isInt = typeof value === 'number' && Number.isInteger(value);
   const n = useCountUp(isInt ? value : 0);
-  return <div className="glass stat"><div className="v">{isInt ? n : value}</div><div className="l">{label}</div>{hint && <div className="small muted">{hint}</div>}</div>;
+  return <div className="glass stat"><div className="l">{label}</div><div className="v">{isInt ? n : value}</div>{hint && <div className="small muted">{hint}</div>}</div>;
 }
 
 export function Field({ label, id, error, children, ...props }) {
