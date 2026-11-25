@@ -34,11 +34,33 @@ A: PATCH `/slots/:id/status` {available|occupied|reserved|maintenance}.
 | GET | /bookings/daily?date | A | all locations |
 | POST | /qr/scan | A | {token, action: entry\|exit}; single-use transitions |
 
+### Booking flow additions
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET | /bookings/availability?locationId&start&end | U A | slot ids already booked in that window (max 24 h) |
+| POST | /qr/verify | A | {token} verifies signature, booking, time window and payment without changing anything; returns `nextAction` entry, exit or none |
+
+Booking responses include `bookingNo` (for example `SP-4F7K2Q`). A conflict on create returns 409 "Sorry, this slot was just taken. Please select another slot."
+
 ## /vehicles (U A, owner only)
 GET, POST `{plate,type,make?,model?,color?}`, PUT/DELETE `/:id`.
 
 ## /payments
 U A (login required): GET `/payments/pricing?locationId`, POST `/payments/quote`. U: GET `/payments/me`. A: GET `/payments/pending`, PATCH `/payments/:id/paid` {method}, GET `/payments`, PUT `/payments/pricing`.
+
+### Payments and invoices
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET | /payments/config | U A | `{demoPaymentEnabled, gateway: null}` |
+| GET | /payments/pricing/summary | U A | default and per-location hourly rates |
+| GET | /payments/me?bookingId&status | U | own transactions |
+| GET | /payments/:id | owner, A | transaction details |
+| GET | /payments/:id/invoice | owner, A | PDF invoice |
+| POST | /payments/demo-pay | U | {bookingId, outcome: success or fail}; only when `ENABLE_DEMO_PAYMENT=true`; simulated, never real money |
+| GET | /payments?status&method&q | A | statuses pending, paid, failed, refunded |
+| PATCH | /payments/:id/paid | A | {method}; on-site settlement |
+
+A payment record (status pending, with a transaction ID and invoice number) is created with every booking. The pricing rule accepts optional `serviceFee` and `discountPercent`. Quotes return `lines` (parking fee, peak surcharge, daily cap adjustment, high-demand surcharge, service fee, discount) and `total`.
 
 ## /camera and /monitoring (A only)
 GET `/camera/zones`; POST `/camera/zones`, PUT `/camera/zones/:id/calibration`, DELETE `/camera/zones/:id`, POST `/camera/sessions`, POST `/camera/sessions/:id/heartbeat`, DELETE `/camera/sessions/:id`, POST `/camera/zones/:id/detect` (raw `image/jpeg` <= 2 MB), PATCH `/camera/zones/:id/slots/:slotId` (manual correction), GET `/monitoring/status`.
@@ -47,9 +69,9 @@ GET `/camera/zones`; POST `/camera/zones`, PUT `/camera/zones/:id/calibration`, 
 GET `/notifications`, PATCH `/notifications/read-all`, PATCH `/notifications/:id/read`.
 
 ## /analytics and /audit (A only)
-GET `/analytics/summary|revenue?period=daily|weekly|monthly|peak-hours|vehicles`, GET `/analytics/export?format=csv|pdf&period=`. GET `/audit/logs?severity&role&action`, GET `/audit/summary`.
+GET `/analytics/summary`, `/analytics/overview?from&to` (occupancy by hour and day, most occupied locations and slots, revenue by location and method, booking counts, cancellation rate, average stay and booking value, top locations), `/analytics/revenue?period&from&to`, `/analytics/peak-hours`, `/analytics/vehicles`, and `/analytics/export?format=csv|pdf&period&from&to` (export follows the selected date range). GET `/audit/logs?severity&role&action`, GET `/audit/summary`.
 
 ## Realtime (Socket.IO at `/socket.io`)
-A valid login cookie is required to connect. Client emits `subscribe:location` (id). Server emits `slot:updated`, `notification`, and for admins `camera:detection`, `camera:session`, `alert`.
+A valid login cookie is required to connect. Client emits `subscribe:location` (id). Server emits `slot:updated`, `availability:changed` (a booking at that location changed), `notification`, and for admins `stats:changed` (refresh analytics), `camera:detection`, `camera:session`, `alert`.
 
 `/internal/*` routes exist on services for service-to-service calls only; the gateway blocks them and they require `X-Internal-Key`.

@@ -132,6 +132,7 @@ services:
     environment:
       <<: *env
       PORT: "4006"
+      ENABLE_DEMO_PAYMENT: ${ENABLE_DEMO_PAYMENT:-false}
 
   camera-service:
     <<: *service
