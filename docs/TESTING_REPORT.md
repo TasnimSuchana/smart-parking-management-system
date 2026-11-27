@@ -13,6 +13,9 @@
 Executed offline: 13 backend unit tests (including an itemised-price test where every line sums to the total), 10 frontend helper tests (map colours, opening hours, distance, pricing lookup) run through a minimal shim because vitest could not be installed, syntax and undefined-name checks of every backend and frontend file, and a full frontend import-graph bundle.
 NOT run: the new endpoints against MongoDB, the booking wizard in a browser, invoice PDF output, QR verify/entry/exit end to end, analytics numbers against real data, and the integration suite. These need `docker compose up` on your machine.
 
+## Camera page update
+Executed offline: syntax, undefined-name and bundle checks of the camera service and page. NOT run: the live camera view, overlay alignment, the detection history against MongoDB, and anything with a real detector. Plate reading is not part of the bundled system; the page only displays a plate if the external detector returns one.
+
 ## Written but NOT executed (needs your environment)
 | Requirement | Test asset | Status |
 |---|---|---|

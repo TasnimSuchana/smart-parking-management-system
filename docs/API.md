@@ -63,7 +63,7 @@ U A (login required): GET `/payments/pricing?locationId`, POST `/payments/quote`
 A payment record (status pending, with a transaction ID and invoice number) is created with every booking. The pricing rule accepts optional `serviceFee` and `discountPercent`. Quotes return `lines` (parking fee, peak surcharge, daily cap adjustment, high-demand surcharge, service fee, discount) and `total`.
 
 ## /camera and /monitoring (A only)
-GET `/camera/zones`; POST `/camera/zones`, PUT `/camera/zones/:id/calibration`, DELETE `/camera/zones/:id`, POST `/camera/sessions`, POST `/camera/sessions/:id/heartbeat`, DELETE `/camera/sessions/:id`, POST `/camera/zones/:id/detect` (raw `image/jpeg` <= 2 MB), PATCH `/camera/zones/:id/slots/:slotId` (manual correction), GET `/monitoring/status`.
+GET `/camera/zones`, GET `/camera/zones/:id/history?limit` (detection history: vehicle_detected, vehicle_confirmed, slot_occupied, vehicle_left, slot_available, manual_override); POST `/camera/zones`, PUT `/camera/zones/:id/calibration`, DELETE `/camera/zones/:id`, POST `/camera/sessions`, POST `/camera/sessions/:id/heartbeat`, DELETE `/camera/sessions/:id`, POST `/camera/zones/:id/detect` (raw `image/jpeg` <= 2 MB; returns `detections` with confidence and boxes, per-slot status and `events`), PATCH `/camera/zones/:id/slots/:slotId` (manual correction), GET `/monitoring/status`.
 
 ## /notifications (U A)
 GET `/notifications`, PATCH `/notifications/read-all`, PATCH `/notifications/:id/read`.

@@ -33,6 +33,9 @@
 - Invoices and transaction details are visible only to the owner or an admin; other users get 404. QR verification is admin-only, logs `qr.scanned`, `qr.rejected` and `qr.invalid`, and does not change state.
 - The internal vehicle endpoint now returns the full plate (internal network and key only) so invoices can print it; the plate is never stored in the payment database.
 
+## Camera history
+Detection history is admin-only and kept 30 days. If a detector returns plate text it is validated against a registration-number pattern and stored encrypted (AES-256-GCM); plates are not sent over the real-time channel. The demo simulation runs only in the browser and writes nothing.
+
 ## Known limitations / residual risk
 1. **Password hashing is scrypt, not Argon2id/bcrypt** (the brief allowed Argon2id or bcrypt). scrypt with these parameters is OWASP-acceptable and avoids native dependencies; swap in `argon2` inside `shared/password.js` if you need strict conformance (the stored format is versioned for migration).
 2. Suspension is enforced immediately via Redis; if Redis is down the check fails open and a suspended user's access token remains valid for up to 15 minutes.

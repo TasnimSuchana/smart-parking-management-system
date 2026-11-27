@@ -8,62 +8,113 @@ import api, { unwrap } from '../services/api.js';
 import { Spinner, ErrorBox, Empty, Confirm, Field } from '../components/UI.jsx';
 import { errMsg } from '../utils/format.js';
 
-const STATUS_LABEL = { idle: 'Camera off', starting: 'Requesting camera...', live: 'Live', denied: 'Permission denied', disconnected: 'Camera disconnected', error: 'Error' };
+const pct = (v) => (v == null ? '-' : `${Math.round(v * 100)}%`);
+const hms = (d) => new Date(d).toLocaleTimeString([], { hour12: false });
+const CAM_STATE = { idle: ['off', 'Offline'], starting: ['warn', 'Connecting'], live: ['on', 'Online'], denied: ['off', 'Permission denied'], error: ['off', 'Error'], disconnected: ['off', 'Disconnected'] };
+const box = (r) => ({ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` });
+
+// Camera frame with the calibrated slot rectangles and detected vehicles drawn on top (all coordinates are normalised 0-1).
+function Stage({ videoRef, live, aspect, zone, analysis, sim }) {
+  const bySlot = new Map((analysis?.slots || []).map((x) => [x.slotId, x]));
+  return (
+    <div className="stage" style={{ aspectRatio: aspect }}>
+      <video ref={videoRef} muted playsInline aria-label="Live camera preview" style={{ display: live ? 'block' : 'none' }} />
+      {!live && <div className="stage-empty"><strong>{sim ? 'Simulated scene' : 'Camera is off'}</strong><span className="small muted">{sim ? 'Demo only. No camera or detector is being used.' : 'Press Start monitoring to open the camera.'}</span></div>}
+      {live && <span className="pill live">&#9679; LIVE</span>}{sim && <span className="pill sim">SIMULATION</span>}
+      {zone?.slots.map((sl) => { const st = bySlot.get(sl.slotId); const occ = (st?.detectedOccupied) || (sim && sim.slotId === sl.slotId && sim.phase !== 'detected');
+        return <div key={sl.slotId} className={`slot-rect ${occ ? 'occ' : 'free'}`} style={box(sl.rect)}><span>{sl.label}</span></div>; })}
+      {analysis?.detections?.map((d, i) => <div key={i} className="det-box" style={box(d.box)}><span>{d.label.toUpperCase()} {pct(d.confidence)}</span></div>)}
+      {sim && <div className="det-box sim" style={box(sim.rect)}><span>CAR {sim.conf}%</span></div>}
+    </div>
+  );
+}
 
 export default function CameraMonitor() {
   useTitle('Camera monitoring'); const { user } = useAuth(); const toast = useToast();
   const zones = useAsync(() => unwrap(api.get('/camera/zones')), []);
   const [zoneId, setZoneId] = useState(''); const [state, setState] = useState('idle'); const [analysis, setAnalysis] = useState(null); const [note, setNote] = useState('');
-  const [events, setEvents] = useState([]); const [calib, setCalib] = useState(false);
-  const video = useRef(null), stream = useRef(null), session = useRef(null), timers = useRef([]);
+  const [detector, setDetector] = useState('unknown'); const [frames, setFrames] = useState(0); const [aspect, setAspect] = useState('16 / 9');
+  const [history, setHistory] = useState([]); const [simLog, setSimLog] = useState([]); const [sim, setSim] = useState(null);
+  const video = useRef(null), stream = useRef(null), session = useRef(null), timers = useRef([]), simTimers = useRef([]), reloadT = useRef(null);
   const zone = zones.data?.find((z) => z._id === (zoneId || zones.data?.[0]?._id));
-  const { connected } = useSocket({ 'camera:detection': (e) => setEvents((l) => [`${new Date().toLocaleTimeString()} slot ${e.label} -> ${e.status}`, ...l].slice(0, 8)), 'camera:session': (e) => setEvents((l) => [`${new Date().toLocaleTimeString()} session ${e.status}`, ...l].slice(0, 8)) }, { locationId: zone?.locationId });
+  const hist = useAsync(() => (zone ? unwrap(api.get(`/camera/zones/${zone._id}/history`, { params: { limit: 30 } })) : Promise.resolve([])), [zone?._id]); // eslint-disable-line
+  useEffect(() => { if (hist.data) setHistory(hist.data); }, [hist.data]);
+  const { connected } = useSocket({ 'camera:event': () => { clearTimeout(reloadT.current); reloadT.current = setTimeout(() => hist.reload(), 800); } }, { locationId: zone?.locationId });
 
   const stop = async (final = 'idle') => {
     timers.current.forEach(clearInterval); timers.current = [];
     stream.current?.getTracks().forEach((t) => t.stop()); stream.current = null;
     if (session.current) { api.delete(`/camera/sessions/${session.current}`).catch(() => {}); session.current = null; }
-    setState(final);
+    setState(final); setAnalysis(null);
   };
-  useEffect(() => () => { stop(); }, []); // eslint-disable-line
+  useEffect(() => () => { stop(); simTimers.current.forEach(clearTimeout); clearTimeout(reloadT.current); }, []); // eslint-disable-line
 
   const start = async () => {
-    if (!zone) return; setNote(''); setAnalysis(null); setState('starting');
-    try {
-      // Permission is requested only now, when monitoring starts. Rear camera preferred on phones.
+    if (!zone) return; setNote(''); setAnalysis(null); setState('starting'); setFrames(0);
+    try { // Permission is requested only now. Rear camera preferred on phones.
       stream.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false });
     } catch (e) { setState(e.name === 'NotAllowedError' ? 'denied' : 'error'); setNote(e.name === 'NotAllowedError' ? 'Camera permission was denied. Allow camera access in your browser settings and try again.' : 'No usable camera was found.'); return; }
     try { const s = await unwrap(api.post('/camera/sessions', { zoneId: zone._id })); session.current = s._id; }
     catch (e) { setNote(errMsg(e)); await stop('error'); return; }
-    video.current.srcObject = stream.current; await video.current.play().catch(() => {}); setState('live');
-    stream.current.getVideoTracks()[0].addEventListener('ended', () => stop('disconnected')); // cable/permission revoked
+    video.current.srcObject = stream.current; await video.current.play().catch(() => {});
+    if (video.current.videoWidth) setAspect(`${video.current.videoWidth} / ${video.current.videoHeight}`);
+    setState('live'); stream.current.getVideoTracks()[0].addEventListener('ended', () => stop('disconnected'));
     const hb = setInterval(() => session.current && api.post(`/camera/sessions/${session.current}/heartbeat`).catch(() => {}), 15000);
     const cap = setInterval(async () => {
       const v = video.current; if (!v?.videoWidth) return;
       const c = document.createElement('canvas'); const w = Math.min(960, v.videoWidth); c.width = w; c.height = Math.round((v.videoHeight / v.videoWidth) * w); c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
       const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.7));
-      try { setAnalysis(await unwrap(api.post(`/camera/zones/${zone._id}/detect`, blob, { headers: { 'Content-Type': 'image/jpeg' } }))); setNote(''); }
-      catch (e) { setNote(errMsg(e)); }
+      try {
+        const r = await unwrap(api.post(`/camera/zones/${zone._id}/detect`, blob, { headers: { 'Content-Type': 'image/jpeg' } }));
+        setAnalysis(r); setDetector('online'); setNote(''); setFrames((n) => n + 1);
+        if (r.events?.length) setHistory((h) => [...r.events, ...h.filter((x) => !r.events.some((e) => e.id === x.id))].slice(0, 50));
+      } catch (e) { if (e?.response?.data?.error?.code === 'DETECTOR_UNAVAILABLE') setDetector('unavailable'); setNote(errMsg(e)); }
     }, 3000);
     timers.current = [hb, cap];
   };
-  const override = async (slotId, status) => { try { await api.patch(`/camera/zones/${zone._id}/slots/${slotId}`, { status }); toast('Slot updated'); } catch (e) { toast(errMsg(e), 'error'); } };
 
-  if (zones.loading) return <Spinner />; if (zones.error) return <ErrorBox message={zones.error} onRetry={zones.reload} />;
+  // Demo simulation: client-side only. Nothing is sent to the server, no slot is changed, every entry is labelled "simulated".
+  const runDemo = () => {
+    simTimers.current.forEach(clearTimeout); const sl = zone?.slots?.[0]; const rect = sl?.rect || { x: 0.35, y: 0.4, w: 0.3, h: 0.3 }; const label = sl?.label || 'A-12';
+    const conf = 90 + Math.floor(Math.random() * 7); const plate = 'DHA-12-3456'; const base = { rect, slotId: sl?.slotId, label, conf, plate };
+    const log = (type, message) => setSimLog((l) => [{ id: `sim-${Date.now()}-${type}`, type, message, slot: label, confidence: conf / 100, plate, simulated: true, at: new Date().toISOString() }, ...l].slice(0, 12));
+    setSim({ ...base, phase: 'detected' }); log('vehicle_detected', 'Vehicle detected');
+    simTimers.current = [setTimeout(() => { setSim({ ...base, phase: 'confirmed' }); log('vehicle_confirmed', 'Vehicle confirmed'); }, 2500),
+      setTimeout(() => { setSim({ ...base, phase: 'occupied' }); log('slot_occupied', `Slot ${label} occupied`); }, 5000), setTimeout(() => setSim(null), 14000)];
+  };
+  const override = async (slotId, status) => { try { await api.patch(`/camera/zones/${zone._id}/slots/${slotId}`, { status }); toast('Slot updated'); hist.reload(); } catch (e) { toast(errMsg(e), 'error'); } };
+
+  if (zones.loading) return <Spinner label="Loading cameras..." />; if (zones.error) return <ErrorBox message={zones.error} onRetry={zones.reload} />;
+  const [dotCls, stateLabel] = CAM_STATE[state];
+  // Focus: the sim vehicle, otherwise the most confident occupied slot in the latest analysed frame.
+  const live = analysis?.slots?.filter((x) => x.detectedOccupied).sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
+  const focus = sim ? { slot: sim.label, plate: sim.plate, confidence: sim.conf / 100, occupied: sim.phase === 'occupied', confirming: sim.phase === 'detected' ? 1 : sim.phase === 'confirmed' ? 2 : null, simulated: true }
+    : live ? { slot: live.label, plate: live.plate, confidence: live.confidence, occupied: live.applied || live.consecutiveFrames >= (analysis.framesRequired || 3), confirming: live.consecutiveFrames < (analysis.framesRequired || 3) ? live.consecutiveFrames : null } : null;
+  const events = [...simLog, ...history].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 30);
   return (
     <div className="stack"><h1>Camera monitoring</h1>
       {!zones.data.length ? <Empty title="No camera zones configured" hint="Create a zone below, then calibrate it." /> : (
         <section className="glass card stack">
-          <div className="row"><div style={{ flex: 1, minWidth: 220 }}><label className="small muted" htmlFor="zone">Zone</label><select id="zone" value={zone?._id} disabled={state !== 'idle'} onChange={(e) => setZoneId(e.target.value)}>{zones.data.map((z) => <option key={z._id} value={z._id}>{z.name}{z.calibratedAt ? '' : ' (not calibrated)'}</option>)}</select></div>
-            <span className="small"><span className={`dot ${state === 'live' ? 'on' : 'off'}`} /> {STATUS_LABEL[state]} &middot; realtime {connected ? 'connected' : 'reconnecting'}</span></div>
-          <video ref={video} className="video" muted playsInline aria-label="Live camera preview" style={{ display: state === 'live' ? 'block' : 'none' }} />
-          <div className="row">{state === 'live' ? <button className="btn danger" onClick={() => stop()}>Stop monitoring</button> : <button className="btn primary" disabled={!zone || state === 'starting'} onClick={start}>Start monitoring</button>}</div>
-          {note && <p className={state === 'denied' || state === 'error' || state === 'disconnected' ? 'err' : 'muted small'} role="alert">{note}</p>}
+          <div className="row between"><div className="row"><div><label className="small muted" htmlFor="zone">Camera</label><select id="zone" value={zone?._id} disabled={state !== 'idle'} onChange={(e) => { setZoneId(e.target.value); setSimLog([]); setSim(null); }}>{zones.data.map((z) => <option key={z._id} value={z._id}>{z.name}{z.calibratedAt ? '' : ' (not calibrated)'}</option>)}</select></div></div>
+            <div className="cam-status"><span><span className={`dot ${dotCls}`} /> <strong>{stateLabel}</strong></span>
+              <span className="small muted">Detector: {detector === 'online' ? 'online' : detector === 'unavailable' ? 'not available' : 'waiting'}</span><span className="small muted">Realtime: {connected ? 'connected' : 'reconnecting'}</span><span className="small muted">Frames analysed: {frames}</span></div></div>
+          <div className="cam-grid">
+            <Stage videoRef={video} live={state === 'live'} aspect={aspect} zone={zone} analysis={analysis} sim={sim} />
+            <div className="stack">
+              <div className="kv"><span className="muted small">Detected (plate)</span><strong>{focus?.plate ? focus.plate : focus ? 'Not read' : '-'}</strong>{focus && !focus.plate && <span className="small muted">Plate reading needs an ANPR-capable detector.</span>}{focus?.simulated && <span className="small" style={{ color: 'var(--warn)' }}>Simulated value</span>}</div>
+              <div className="kv"><span className="muted small">Confidence</span><strong>{focus ? pct(focus.confidence) : '-'}</strong></div>
+              <div className="kv"><span className="muted small">Slot</span><strong>{focus?.slot || '-'}</strong></div>
+              <div className="kv"><span className="muted small">Status</span><strong>{!focus ? '-' : focus.confirming ? <><span className="dot warn" /> Confirming {focus.confirming}/{analysis?.framesRequired || 3}</> : <><span className="dot off" /> Occupied</>}</strong></div>
+            </div></div>
+          <div className="row">{state === 'live' ? <button className="btn danger" onClick={() => stop()}>Stop monitoring</button> : <button className="btn primary" disabled={!zone || state === 'starting'} onClick={start}>Start monitoring</button>}
+            <button className="btn" onClick={runDemo} disabled={!zone || !!sim} title="Client-side demo; does not touch real slots">Run demo simulation</button></div>
+          {note && <p className={state === 'live' ? 'muted small' : 'err'} role="alert">{note}</p>}
           {state === 'disconnected' && <p className="err">The camera disconnected. Reconnect it and start monitoring again.</p>}
-          <p className="small muted">Frames are analysed on the server and are not stored. Detection only applies to slots inside the calibrated zone for this fixed camera position.</p>
-          {analysis && <div><h3>Detections ({analysis.vehicles} vehicle{analysis.vehicles === 1 ? '' : 's'})</h3><div className="table-wrap"><table><thead><tr><th>Slot</th><th>Detected</th><th>Consecutive frames</th><th>Applied</th><th>Manual correction</th></tr></thead><tbody>{analysis.slots.map((s) => <tr key={s.slotId}><td>{s.label}</td><td>{s.detectedOccupied ? 'occupied' : 'empty'}</td><td>{s.consecutiveFrames}</td><td>{s.applied ? 'yes' : '-'}</td><td className="row"><button className="btn sm" onClick={() => override(s.slotId, 'occupied')}>Occupied</button><button className="btn sm" onClick={() => override(s.slotId, 'available')}>Available</button></td></tr>)}</tbody></table></div></div>}
-          {events.length > 0 && <ul className="small muted">{events.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+          <p className="small muted">Frames are analysed on the server and are not stored. A slot only changes after {analysis?.framesRequired || 3} consistent frames. Boxes: green = free slot, red = occupied slot, cyan = detected vehicle. Simulation is for demonstration only.</p>
+          {analysis?.slots?.length > 0 && <div className="table-wrap"><table><thead><tr><th>Slot</th><th>Detected</th><th>Confidence</th><th>Frames</th><th>Applied</th><th>Manual correction</th></tr></thead><tbody>{analysis.slots.map((x) => <tr key={x.slotId}><td>{x.label}</td><td>{x.detectedOccupied ? 'occupied' : 'empty'}</td><td>{pct(x.confidence)}</td><td>{x.consecutiveFrames}/{analysis.framesRequired}</td><td>{x.applied ? 'yes' : '-'}</td><td className="row"><button className="btn sm" onClick={() => override(x.slotId, 'occupied')}>Occupied</button><button className="btn sm" onClick={() => override(x.slotId, 'available')}>Available</button></td></tr>)}</tbody></table></div>}
         </section>)}
+      {zones.data.length > 0 && <section className="glass card"><h2>Detection history</h2>
+        {!events.length ? <p className="muted small">No detections yet. Start monitoring to see events here.</p> : <ul className="timeline">{events.map((e) => <li key={e.id}><time>{hms(e.at)}</time><span className={`dot t-${e.type}`} /><span>{e.message}{e.confidence != null && e.type !== 'slot_occupied' && e.type !== 'slot_available' ? ` (${pct(e.confidence)})` : ''}{e.plate ? ` · ${e.plate}` : ''}{e.simulated && <em className="small" style={{ color: 'var(--warn)' }}> simulated</em>}</span></li>)}</ul>}</section>}
       {user.role === 'admin' && <ZoneAdmin zones={zones.data} reload={zones.reload} />}
     </div>
   );

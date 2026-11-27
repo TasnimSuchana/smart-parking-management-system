@@ -8,6 +8,7 @@ const { req: envReq, opt } = require('../../shared/env');
 const { asyncH, authenticate, adminOnly, validate, ok } = require('../../shared/middleware');
 const { notFound, bad, AppError } = require('../../shared/errors');
 const bus = require('../../shared/bus');
+const { encrypt, decrypt } = require('../../shared/secure');
 const { call, url, PORTS } = require('../../shared/http');
 
 const PARKING = url('parking', PORTS.parking);
@@ -23,6 +24,22 @@ const Session = mongoose.model('MonitoringSession', new mongoose.Schema({
   userId: String, locationId: String, zoneId: String, status: { type: String, enum: ['active', 'stopped', 'disconnected'], default: 'active' },
   lastHeartbeat: { type: Date, default: Date.now }, framesProcessed: { type: Number, default: 0 },
 }, { timestamps: true }));
+
+// Detection history shown on the monitoring page (kept 30 days). Plates, if the detector reads them, are stored encrypted.
+const DetectionEvent = mongoose.model('DetectionEvent', new mongoose.Schema({
+  zoneId: { type: String, index: true }, locationId: String, slotId: String, slotLabel: String,
+  type: { type: String, enum: ['vehicle_detected', 'vehicle_confirmed', 'slot_occupied', 'vehicle_left', 'slot_available', 'manual_override'] },
+  message: String, confidence: Number, plateEnc: String, at: { type: Date, default: Date.now, index: true },
+}).index({ at: 1 }, { expireAfterSeconds: 30 * 86400 }));
+const safeDecrypt = (v) => { try { return decrypt(v); } catch { return null; } };
+const evView = (e) => ({ id: String(e._id), type: e.type, message: e.message, slotId: e.slotId, slot: e.slotLabel, confidence: e.confidence ?? null, plate: e.plateEnc ? safeDecrypt(e.plateEnc) : null, at: e.at });
+// Only accept plate text that looks like a registration number (the detector is an external service).
+const cleanPlate = (p) => (typeof p === 'string' && /^[A-Z0-9][A-Z0-9 -]{3,14}[A-Z0-9]$/.test(p.trim().toUpperCase()) ? p.trim().toUpperCase() : undefined);
+async function logEvent(zone, sl, type, message, { confidence, plate } = {}) {
+  const e = await DetectionEvent.create({ zoneId: String(zone._id), locationId: zone.locationId, slotId: sl.slotId, slotLabel: sl.label, type, message, confidence, plateEnc: plate ? encrypt(plate) : undefined });
+  bus.publish('camera.event', { zoneId: String(zone._id), locationId: zone.locationId, slotId: sl.slotId, label: sl.label, type, message, confidence, at: e.at });
+  return { ...evView(e), plate: plate || null };
+}
 
 const VEHICLE_LABELS = new Set(['car', 'truck', 'bus', 'motorcycle', 'bicycle']);
 const overlap = (a, b) => { // fraction of slot rect covered by detection box
@@ -78,30 +95,44 @@ async function detect(buf) {
     if (!Buffer.isBuffer(req.body) || !isJpeg(req.body)) throw bad('Send a JPEG image (Content-Type: image/jpeg)');
     const zone = await Zone.findById(req.params.id); if (!zone) throw notFound();
     const dets = (await detect(req.body)).filter((d) => VEHICLE_LABELS.has(d.label) && d.confidence >= zone.minConfidence && d.box);
-    const result = [];
+    const result = [], events = [];
+    const note = async (sl, type, message, extra) => events.push(await logEvent(zone, sl, type, message, extra));
     for (const sl of zone.slots) {
-      const occupied = dets.some((d) => overlap(d.box, sl.rect) >= zone.minOverlap);
-      const k = `${zone._id}:${sl.slotId}`, st = streaks.get(k) || { state: occupied, n: 0 };
-      st.n = st.state === occupied ? st.n + 1 : 1; st.state = occupied; streaks.set(k, st);
+      // The most confident vehicle overlapping this slot's calibrated rectangle.
+      const best = dets.filter((d) => overlap(d.box, sl.rect) >= zone.minOverlap).sort((a, b) => b.confidence - a.confidence)[0];
+      const occupied = !!best, plate = cleanPlate(best?.plate), conf = best ? best.confidence : null;
+      const k = `${zone._id}:${sl.slotId}`, st = streaks.get(k) || { state: occupied, n: 0, seen: false };
+      st.n = st.state === occupied ? st.n + 1 : 1; st.state = occupied; if (occupied) st.seen = true; streaks.set(k, st);
+      if (occupied && st.n === 1) await note(sl, 'vehicle_detected', `Vehicle detected at slot ${sl.label}`, { confidence: conf, plate });
       let applied = false;
       if (st.n === zone.framesRequired) { // validated: N consecutive consistent frames
+        if (occupied) await note(sl, 'vehicle_confirmed', `Vehicle confirmed in slot ${sl.label}`, { confidence: conf, plate });
+        else if (st.seen) { st.seen = false; await note(sl, 'vehicle_left', `Vehicle left slot ${sl.label}`); }
         const target = occupied ? 'occupied' : 'available';
         const cur = await call(PARKING, `/internal/slots/${sl.slotId}`).catch(() => null);
         if (cur && cur.status !== target && cur.status !== 'maintenance' && !(target === 'available' && cur.status === 'reserved')) {
           await call(PARKING, `/internal/slots/${sl.slotId}/status`, { method: 'PATCH', body: { status: target } }); applied = true;
           bus.publish('camera.detection', { zoneId: String(zone._id), locationId: zone.locationId, slotId: sl.slotId, label: sl.label, status: target });
+          await note(sl, occupied ? 'slot_occupied' : 'slot_available', `Slot ${sl.label} ${occupied ? 'occupied' : 'available'}`, { confidence: conf, plate });
         }
       }
-      result.push({ slotId: sl.slotId, label: sl.label, detectedOccupied: occupied, consecutiveFrames: st.n, applied });
+      result.push({ slotId: sl.slotId, label: sl.label, detectedOccupied: occupied, consecutiveFrames: st.n, applied, confidence: conf, plate: plate || null, box: best?.box || null });
     }
     await Session.updateMany({ zoneId: String(zone._id), userId: req.user.id, status: { $ne: 'stopped' } }, { $inc: { framesProcessed: 1 }, lastHeartbeat: new Date(), status: 'active' });
-    ok(res, { vehicles: dets.length, slots: result });
+    ok(res, { vehicles: dets.length, framesRequired: zone.framesRequired, analysedAt: new Date(), detections: dets.map((d) => ({ label: d.label, confidence: d.confidence, box: d.box, plate: cleanPlate(d.plate) || null })), slots: result, events });
+  }));
+
+  // Recent detection history for a zone (newest first).
+  app.get('/zones/:id/history', asyncH(async (req, res) => {
+    const limit = Math.min(100, Math.max(1, +req.query.limit || 30));
+    ok(res, (await DetectionEvent.find({ zoneId: req.params.id }).sort('-at').limit(limit)).map(evView));
   }));
 
   // Manual correction by an admin (audited).
   app.patch('/zones/:id/slots/:slotId', validate(z.object({ status: z.enum(['available', 'occupied', 'reserved', 'maintenance']) }).strict()), asyncH(async (req, res) => {
     const zone = await Zone.findById(req.params.id); if (!zone || !zone.slots.some((s) => s.slotId === req.params.slotId)) throw notFound();
     const r = await call(PARKING, `/internal/slots/${encodeURIComponent(req.params.slotId)}/status`, { method: 'PATCH', body: { status: req.body.status } });
+    const sl = zone.slots.find((x) => x.slotId === req.params.slotId); await logEvent(zone, sl, 'manual_override', `Slot ${sl.label} set to ${req.body.status} manually`).catch(() => {});
     streaks.delete(`${zone._id}:${req.params.slotId}`); bus.audit(req, 'camera.manual_override', { slotId: req.params.slotId, status: req.body.status }, 'warn'); ok(res, r);
   }));
 
