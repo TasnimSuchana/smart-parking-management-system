@@ -29,23 +29,83 @@ export function Bookings() {
   useTitle('Bookings & history'); const toast = useToast(); const [page, setPage] = useState(1);
   const b = useAsync(() => unwrapPaged(api.get('/bookings', { params: { page, limit: 10 } })), [page]);
   const cfg = useAsync(() => unwrap(api.get('/payments/config')).catch(() => ({ demoPaymentEnabled: false })), []);
-  const [ticket, setTicket] = useState(null); const [cancel, setCancel] = useState(null); const [busy, setBusy] = useState(false);
+  const [ticket, setTicket] = useState(null);
+const [cancel, setCancel] = useState(null);
+const [extend, setExtend] = useState(null);
+const [extraHours, setExtraHours] = useState(1);
+const [busy, setBusy] = useState(false);
   useSocket({ notification: () => b.reload() });
   const showTicket = async (x) => { try { const [t, pays] = await Promise.all([unwrap(api.get(`/bookings/${x.id}/ticket`)), api.get('/payments/me', { params: { bookingId: x.id } }).then((r) => r.data.data)]); setTicket({ booking: x, ...t, payment: pays[0] || null }); } catch (e) { toast(errMsg(e), 'error'); } };
   const payTest = async () => { try { const p = await unwrap(api.post('/payments/demo-pay', { bookingId: ticket.booking.id, outcome: 'success' })); setTicket({ ...ticket, payment: p }); toast('Test payment recorded'); } catch (e) { toast(errMsg(e), 'error'); } };
-  const doCancel = async () => { setBusy(true); try { await api.post(`/bookings/${cancel.id}/cancel`); toast('Booking cancelled'); setCancel(null); b.reload(); } catch (e) { toast(errMsg(e), 'error'); setCancel(null); } finally { setBusy(false); } };
+  const doCancel = async () => {
+  setBusy(true);
+  try {
+    await api.post(`/bookings/${cancel.id}/cancel`);
+    toast('Booking cancelled');
+    setCancel(null);
+    b.reload();
+  } catch (e) {
+    toast(errMsg(e), 'error');
+    setCancel(null);
+  } finally {
+    setBusy(false);
+  }
+};
+
+const doExtend = async () => {
+  if (!extend) return;
+  setBusy(true);
+  try {
+    await api.post(`/bookings/${extend.id}/extend`, { extraHours });
+    toast('Booking extended successfully');
+    setExtend(null);
+    setExtraHours(1);
+    b.reload();
+  } catch (e) {
+    toast(errMsg(e), 'error');
+  } finally {
+    setBusy(false);
+  }
+};
   if (b.loading) return <Spinner label="Loading your bookings..." />; if (b.error) return <ErrorBox message={b.error} onRetry={b.reload} />;
   return (
     <div className="stack"><div className="row between"><h1>Bookings & parking history</h1><Link className="btn primary" to="/account/book">New booking</Link></div>
       {!b.data.items.length ? <Empty title="No bookings yet"><p><Link className="btn primary" to="/account/book">Book parking</Link></p></Empty> : (
         <div className="glass card table-wrap"><table><thead><tr><th>Booking</th><th>Location</th><th>Slot</th><th>Start</th><th>End</th><th>Entry</th><th>Exit</th><th>Duration</th><th>Amount</th><th>Status</th><th /></tr></thead><tbody>
           {b.data.items.map((x) => <tr key={x.id}><td>{x.bookingNo}</td><td>{x.locationName}</td><td>{x.slotLabel}</td><td>{dt(x.start)}</td><td>{dt(x.end)}</td><td>{dt(x.entryAt)}</td><td>{dt(x.exitAt)}</td><td>{x.durationMinutes ? `${x.durationMinutes} min` : '-'}</td><td>{money(x.finalAmount ?? x.quote?.total, x.quote?.currency)}</td><td><Badge value={x.status} /></td>
-            <td className="row">{['reserved', 'active'].includes(x.status) && <button className="btn sm" onClick={() => showTicket(x)}>View QR</button>}{x.status === 'reserved' && <button className="btn sm danger" onClick={() => setCancel(x)}>Cancel</button>}</td></tr>)}</tbody></table></div>)}
+            <td className="row">
+  {['reserved', 'active'].includes(x.status) && <button className="btn sm" onClick={() => showTicket(x)}>View QR</button>}
+  {x.status === 'reserved' && <button className="btn sm" onClick={() => { setExtend(x); setExtraHours(1); }}>Extend</button>}
+  {x.status === 'reserved' && <button className="btn sm danger" onClick={() => setCancel(x)}>Cancel</button>}
+</td></tr>)}</tbody></table></div>)}
       <div className="row"><button className="btn sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button><button className="btn sm" disabled={page * 10 >= b.data.meta.total} onClick={() => setPage(page + 1)}>Next</button></div>
       {ticket && <Modal title={`Ticket - ${ticket.booking.bookingNo}`} onClose={() => setTicket(null)}>
         <QRCodeTicket booking={ticket.booking} token={ticket.token} expiresAt={ticket.expiresAt} payment={ticket.payment} onCopied={toast} />
         <div className="row" style={{ marginTop: '.75rem' }}>{cfg.data?.demoPaymentEnabled && ticket.payment && ticket.payment.status !== 'paid' && <button className="btn sm" onClick={payTest}>Pay now (test)</button>}<button className="btn" onClick={() => setTicket(null)}>Close</button></div></Modal>}
-      {cancel && <Confirm title="Cancel booking?" message={`Cancel your booking for slot ${cancel.slotLabel} on ${dt(cancel.start)}? This cannot be undone.`} confirmLabel="Cancel booking" busy={busy} onConfirm={doCancel} onClose={() => setCancel(null)} />}
+      {cancel && <Confirm title="Cancel booking?" message={`Cancel your booking for slot ${cancel.slotLabel} on ${dt(cancel.start)}? This cannot be undone.`} confirmLabel="Cancel booking" busy={busy} onConfirm={doCancel} onClose={() => setCancel(null)} />} {extend && <Modal title="Extend parking session" onClose={() => setExtend(null)}>
+  <p>Booking: {extend.bookingNo}</p>
+  <p>Current end time: {dt(extend.end)}</p>
+
+  <label>Additional hours</label>
+  <select
+    value={extraHours}
+    onChange={(e) => setExtraHours(Number(e.target.value))}
+    disabled={busy}
+  >
+    {[1, 2, 3, 4, 5, 6].map((h) => (
+      <option key={h} value={h}>{h} hour{h > 1 ? 's' : ''}</option>
+    ))}
+  </select>
+
+  <div className="row" style={{ marginTop: '1rem' }}>
+    <button className="btn primary" disabled={busy} onClick={doExtend}>
+      {busy ? 'Extending...' : 'Confirm extension'}
+    </button>
+    <button className="btn" disabled={busy} onClick={() => setExtend(null)}>
+      Close
+    </button>
+  </div>
+</Modal>}
     </div>
   );
 }

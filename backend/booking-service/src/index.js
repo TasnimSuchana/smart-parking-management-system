@@ -101,6 +101,98 @@ function trackRate(userId) {
     bus.audit(req, 'booking.cancelled', { id: String(b._id) }); bus.publish('booking.cancelled', { bookingId: String(b._id), userId: b.userId, locationId: b.locationId, slotLabel: b.slotLabel }); ok(res, mine(u));
   }));
 
+  // Extend a reserved booking.
+  app.post('/:id/extend', validate(z.object({
+    extraHours: z.coerce.number().int().min(1).max(24),
+  }).strict()), asyncH(async (req, res) => {
+    const b = await Booking.findOne({
+      _id: req.params.id,
+      userId: req.user.id,
+    });
+
+    if (!b) throw notFound('Booking not found');
+    if (b.status !== 'reserved') {
+      throw conflict('Only reserved bookings can be extended');
+    }
+    if (b.end <= new Date()) {
+      throw conflict('This booking has already ended');
+    }
+
+    const newEnd = new Date(b.end.getTime() + req.body.extraHours * HOUR);
+    const newBuckets = bucketsFor(b.slotId, b.start.getTime(), newEnd.getTime());
+
+    // Calculate the new total using the existing pricing service.
+    const quote = await call(PAYMENT, '/internal/quote', {
+      method: 'POST',
+      body: {
+        locationId: b.locationId,
+        vehicleType: b.vehicleType,
+        start: b.start,
+        end: newEnd,
+      },
+    });
+
+    let updated;
+    try {
+      updated = await Booking.findOneAndUpdate(
+        { _id: b._id, userId: req.user.id, status: 'reserved', end: b.end },
+        { $set: { end: newEnd, buckets: newBuckets, quote } },
+        { new: true }
+      );
+    } catch (e) {
+      if (e.code === 11000) {
+        throw conflict('The slot is not available for the extended period');
+      }
+      throw e;
+    }
+
+    if (!updated) {
+      throw conflict('Booking changed. Please refresh and try again.');
+    }
+
+    try {
+      await call(PAYMENT, '/internal/payments', {
+        method: 'POST',
+        body: {
+          bookingId: String(updated._id),
+          bookingNo: bookingNoOf(updated),
+          userId: updated.userId,
+          locationId: updated.locationId,
+          amount: quote.total,
+          currency: quote.currency,
+          breakdown: quote,
+          snapshot: {
+            bookingNo: bookingNoOf(updated),
+            vehicleId: updated.vehicleId,
+            plateMasked: updated.plateMasked,
+            locationName: updated.locationName,
+            slotLabel: updated.slotLabel,
+            start: updated.start,
+            end: updated.end,
+          },
+        },
+      });
+    } catch (e) {
+      // Restore the original booking if payment update fails.
+      await Booking.findOneAndUpdate(
+        { _id: updated._id, end: newEnd, status: 'reserved' },
+        { $set: { end: b.end, buckets: b.buckets, quote: b.quote } }
+      );
+      throw new AppError(503, 'Could not update payment. Please try again.', 'PAYMENT_UPDATE_FAILED');
+    }
+
+    bus.audit(req, 'booking.extended', { id: String(updated._id) });
+    bus.publish('booking.extended', {
+      bookingId: String(updated._id),
+      userId: updated.userId,
+      newEnd,
+      amount: quote.total,
+    });
+
+    ok(res, mine(updated));
+  }));
+
+
   // Signed, expiring QR ticket for the booking owner.
   app.get('/:id/ticket', asyncH(async (req, res) => {
     const b = await Booking.findOne({ _id: req.params.id, userId: req.user.id }); if (!b) throw notFound('Booking not found');
